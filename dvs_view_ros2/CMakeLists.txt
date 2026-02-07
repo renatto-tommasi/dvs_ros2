@@ -19,7 +19,6 @@ find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 add_executable(histogram_2D src/dvs_histogram.cpp)
-
 ament_target_dependencies(histogram_2D rclcpp dvs_msgs sensor_msgs cv_bridge)
 target_include_directories(histogram_2D PUBLIC include)
 # Link OpenCV
@@ -27,8 +26,17 @@ target_link_libraries(histogram_2D
   ${OpenCV_LIBRARIES}
 )
 
+add_executable(time_surface src/dvs_time_surface.cpp)
+ament_target_dependencies(time_surface rclcpp dvs_msgs sensor_msgs cv_bridge)
+target_include_directories(time_surface PUBLIC include)
+# Link OpenCV
+target_link_libraries(time_surface
+  ${OpenCV_LIBRARIES}
+)
+
 install(TARGETS
   histogram_2D
+  time_surface
   DESTINATION lib/${PROJECT_NAME})
 
 
