@@ -19,8 +19,9 @@ find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 add_executable(histogram_2D src/dvs_histogram.cpp)
-ament_target_dependencies(histogram_2D rclcpp dvs_msgs sensor_msgs cv_bridge)
 
+ament_target_dependencies(histogram_2D rclcpp dvs_msgs sensor_msgs cv_bridge)
+target_include_directories(histogram_2D PUBLIC include)
 # Link OpenCV
 target_link_libraries(histogram_2D
   ${OpenCV_LIBRARIES}
