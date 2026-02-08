@@ -10,11 +10,8 @@ def generate_launch_description():
             name='corner_detector',
             output='screen',
             parameters=[{
-                'radius': 5,
-                'k_threshold': 0.01,
-                'l_min': 4,
-                'l_max': 8,
                 'decay_time': 0.03,
+                'filter_threshold': 0.05,
             }],
         ),
     ])

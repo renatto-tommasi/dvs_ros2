@@ -2,53 +2,78 @@
 
 #include "rclcpp/rclcpp.hpp"
 
+// Hardcoded Bresenham circles (offsets from center)
+const int DVSCornerDetector::kSmallCircle[16][2] = {
+    {0, 3}, {1, 3}, {2, 2}, {3, 1},
+    {3, 0}, {3, -1}, {2, -2}, {1, -3},
+    {0, -3}, {-1, -3}, {-2, -2}, {-3, -1},
+    {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}
+};
+
+const int DVSCornerDetector::kLargeCircle[20][2] = {
+    {0, 4}, {1, 4}, {2, 3}, {3, 2},
+    {4, 1}, {4, 0}, {4, -1}, {3, -2},
+    {2, -3}, {1, -4}, {0, -4}, {-1, -4},
+    {-2, -3}, {-3, -2}, {-4, -1}, {-4, 0},
+    {-4, 1}, {-3, 2}, {-2, 3}, {-1, 4}
+};
+
 DVSCornerDetector::DVSCornerDetector() : Node("corner_detector")
 {
-  // Parameters
-  this->declare_parameter<int>("radius", 3);
-  this->declare_parameter<double>("k_threshold", 0.01);
-  this->declare_parameter<int>("l_min", 3);
-  this->declare_parameter<int>("l_max", 5);
   this->declare_parameter<double>("decay_time", 0.1);
-  R = this->get_parameter("radius").as_int();
-  k = this->get_parameter("k_threshold").as_double();
-  l_min = this->get_parameter("l_min").as_int();
-  l_max = this->get_parameter("l_max").as_int();
-  tau_ = this->get_parameter("decay_time").as_double();
+  this->declare_parameter<double>("filter_threshold", 0.05);
 
-  // SAE will be initialized from the first EventArray message
+  tau_ = this->get_parameter("decay_time").as_double();
+  filter_threshold_ = this->get_parameter("filter_threshold").as_double();
+
   sensor_width_ = 0;
   sensor_height_ = 0;
 
-  // Subscriber for DVS events
   event_subscription_ = this->create_subscription<dvs_msgs::msg::EventArray>(
     "/dvs/events", 10, std::bind(&DVSCornerDetector::event_callback, this, std::placeholders::_1));
 
   corner_image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/dvs/corner_image", 10);
-
-
 }
+
 void DVSCornerDetector::event_callback(const dvs_msgs::msg::EventArray::SharedPtr msg)
 {
-  // Initialize SAE from the first message's sensor dimensions
+  // Initialize surfaces from the first message
   if (sensor_width_ == 0 || sensor_height_ == 0) {
     sensor_width_ = msg->width;
     sensor_height_ = msg->height;
     sae_[0] = cv::Mat::zeros(sensor_height_, sensor_width_, CV_64F);
     sae_[1] = cv::Mat::zeros(sensor_height_, sensor_width_, CV_64F);
+    sae_latest_[0] = cv::Mat::zeros(sensor_height_, sensor_width_, CV_64F);
+    sae_latest_[1] = cv::Mat::zeros(sensor_height_, sensor_width_, CV_64F);
     RCLCPP_INFO(this->get_logger(), "SAE initialized: %dx%d", sensor_width_, sensor_height_);
   }
 
   for (const auto& event : msg->events) {
-    // Update SAE for this event's polarity
-    int pol = event.polarity ? 1 : 0;
-    double t = event.ts.sec + event.ts.nanosec * 1e-9;
-
-    if (event.x < sensor_width_ && event.y < sensor_height_) {
-      sae_[pol].at<double>(event.y, event.x) = t;
+    int ex = event.x;
+    int ey = event.y;
+    if (ex >= sensor_width_ || ey >= sensor_height_) {
+      continue;
     }
 
-    if (is_corner(event)) {
+    int pol = event.polarity ? 1 : 0;
+    int pol_inv = event.polarity ? 0 : 1;
+    double et = event.ts.sec + event.ts.nanosec * 1e-9;
+
+    // Refractory filter: suppress redundant same-polarity events at the same pixel
+    double& t_last = sae_latest_[pol].at<double>(ey, ex);
+    double& t_last_inv = sae_latest_[pol_inv].at<double>(ey, ex);
+
+    if ((et > t_last + filter_threshold_) || (t_last_inv > t_last)) {
+      // Event passes filter: update both surfaces
+      t_last = et;
+      sae_[pol].at<double>(ey, ex) = et;
+    } else {
+      // Event is redundant: only update latest tracker, skip corner test
+      t_last = et;
+      continue;
+    }
+
+    if (is_corner(event, et)) {
       corner_events_.push_back(event);
     }
   }
@@ -59,76 +84,135 @@ void DVSCornerDetector::event_callback(const dvs_msgs::msg::EventArray::SharedPt
   }
 }
 
-bool DVSCornerDetector::is_corner(const dvs_msgs::msg::Event& event)
+bool DVSCornerDetector::is_corner(const dvs_msgs::msg::Event& event, double t)
 {
-  // Border check: reject events where the circle would go out of bounds
-  if (event.x < R || event.x >= sensor_width_ - R ||
-      event.y < R || event.y >= sensor_height_ - R) {
+  int ex = event.x;
+  int ey = event.y;
+
+  // Border check: largest circle has radius 4
+  if (ex < kBorderLimit || ex >= sensor_width_ - kBorderLimit ||
+      ey < kBorderLimit || ey >= sensor_height_ - kBorderLimit) {
     return false;
   }
 
   int pol = event.polarity ? 1 : 0;
-  double event_t = sae_[pol].at<double>(event.y, event.x);
 
-  // 1. Get Circle Indices
-  std::vector<std::pair<int,int>> circle = get_circle_indices(event.x, event.y);
-  int n = static_cast<int>(circle.size());
-  if (n == 0) {
+  // Small circle test first (R=3, 16 points)
+  int small_seg = arc_test(ex, ey, pol, kSmallCircle, kSmallCircleSize);
+  bool small_valid =
+      (small_seg >= kSmallMinThresh && small_seg <= kSmallMaxThresh) ||
+      (small_seg >= (kSmallCircleSize - kSmallMaxThresh) &&
+       small_seg <= (kSmallCircleSize - kSmallMinThresh));
+
+  if (!small_valid) {
     return false;
   }
 
-  // 2-3. Read timestamps from the same-polarity SAE and classify active pixels.
-  //       A pixel is "active" if it fired recently: delta_t = event_t - pixel_t < k.
-  std::vector<bool> active(n, false);
-  for (int i = 0; i < n; i++) {
-    int cx = circle[i].first;
-    int cy = circle[i].second;
-    double pixel_t = sae_[pol].at<double>(cy, cx);
-    double delta_t = event_t - pixel_t;
-    active[i] = (delta_t >= 0.0 && delta_t < k);
-  }
+  // Large circle test (R=4, 20 points)
+  int large_seg = arc_test(ex, ey, pol, kLargeCircle, kLargeCircleSize);
+  bool large_valid =
+      (large_seg >= kLargeMinThresh && large_seg <= kLargeMaxThresh) ||
+      (large_seg >= (kLargeCircleSize - kLargeMaxThresh) &&
+       large_seg <= (kLargeCircleSize - kLargeMinThresh));
 
-  // 4-5. Group consecutive active pixels and find the longest arc.
-  //       The circle wraps around, so iterate over 2*n with modular indexing.
-  int max_arc = 0;
-  int current_arc = 0;
-
-  for (int i = 0; i < 2 * n; i++) {
-    if (active[i % n]) {
-      current_arc++;
-      if (current_arc > n) {
-        break;
-      }
-      max_arc = std::max(max_arc, current_arc);
-    } else {
-      current_arc = 0;
-    }
-  }
-
-  return (max_arc >= l_min && max_arc <= l_max);
+  return large_valid;
 }
 
-std::vector<std::pair<int,int>> DVSCornerDetector::get_circle_indices(int x, int y)
+int DVSCornerDetector::arc_test(int ex, int ey, int pol,
+                                 const int circle[][2], int circle_size)
 {
-  std::vector<std::pair<int,int>> indices;
-  int num_points = 4 * R;
+  // Find the pixel on the circle with the maximum (newest) timestamp
+  int newest_idx = 0;
+  double newest_t = sae_[pol].at<double>(ey + circle[0][1], ex + circle[0][0]);
 
-  for (int i = 0; i < num_points; i++) {
-    double angle = 2.0 * M_PI * i / num_points;
-    int cx = x + static_cast<int>(std::round(R * std::cos(angle)));
-    int cy = y + static_cast<int>(std::round(R * std::sin(angle)));
-    if (indices.empty() || indices.back() != std::make_pair(cx, cy)) {
-      indices.emplace_back(cx, cy);
+  for (int i = 1; i < circle_size; i++) {
+    double t = sae_[pol].at<double>(ey + circle[i][1], ex + circle[i][0]);
+    if (t > newest_t) {
+      newest_t = t;
+      newest_idx = i;
     }
   }
 
-  if (indices.size() > 1 && indices.front() == indices.back()) {
-    indices.pop_back();
+  // Initialize bidirectional expansion from the newest pixel
+  int arc_left_idx = (newest_idx - 1 + circle_size) % circle_size;
+  int arc_right_idx = (newest_idx + 1) % circle_size;
+
+  double arc_left_value = sae_[pol].at<double>(
+      ey + circle[arc_left_idx][1], ex + circle[arc_left_idx][0]);
+  double arc_right_value = sae_[pol].at<double>(
+      ey + circle[arc_right_idx][1], ex + circle[arc_right_idx][0]);
+
+  double arc_left_min_t = arc_left_value;
+  double arc_right_min_t = arc_right_value;
+
+  double segment_new_min_t = newest_t;
+  int newest_segment_size = 1;
+
+  int min_thresh = (circle_size == kSmallCircleSize) ? kSmallMinThresh : kLargeMinThresh;
+
+  // Phase 1: forced expansion for min_thresh - 1 iterations
+  for (int iteration = 1; iteration < min_thresh; iteration++) {
+    if (arc_right_value > arc_left_value) {
+      // Extend right
+      if (arc_right_min_t < segment_new_min_t) {
+        segment_new_min_t = arc_right_min_t;
+      }
+      arc_right_idx = (arc_right_idx + 1) % circle_size;
+      arc_right_value = sae_[pol].at<double>(
+          ey + circle[arc_right_idx][1], ex + circle[arc_right_idx][0]);
+      if (arc_right_value < arc_right_min_t) {
+        arc_right_min_t = arc_right_value;
+      }
+    } else {
+      // Extend left
+      if (arc_left_min_t < segment_new_min_t) {
+        segment_new_min_t = arc_left_min_t;
+      }
+      arc_left_idx = (arc_left_idx - 1 + circle_size) % circle_size;
+      arc_left_value = sae_[pol].at<double>(
+          ey + circle[arc_left_idx][1], ex + circle[arc_left_idx][0]);
+      if (arc_left_value < arc_left_min_t) {
+        arc_left_min_t = arc_left_value;
+      }
+    }
+    newest_segment_size = iteration + 1;
   }
 
-  return indices;
-}
+  // Phase 2: conditional expansion for remaining iterations
+  for (int iteration = min_thresh; iteration < circle_size; iteration++) {
+    if (arc_right_value > arc_left_value) {
+      // Extend right
+      if (arc_right_value >= segment_new_min_t) {
+        newest_segment_size = iteration + 1;
+        if (arc_right_min_t < segment_new_min_t) {
+          segment_new_min_t = arc_right_min_t;
+        }
+      }
+      arc_right_idx = (arc_right_idx + 1) % circle_size;
+      arc_right_value = sae_[pol].at<double>(
+          ey + circle[arc_right_idx][1], ex + circle[arc_right_idx][0]);
+      if (arc_right_value < arc_right_min_t) {
+        arc_right_min_t = arc_right_value;
+      }
+    } else {
+      // Extend left
+      if (arc_left_value >= segment_new_min_t) {
+        newest_segment_size = iteration + 1;
+        if (arc_left_min_t < segment_new_min_t) {
+          segment_new_min_t = arc_left_min_t;
+        }
+      }
+      arc_left_idx = (arc_left_idx - 1 + circle_size) % circle_size;
+      arc_left_value = sae_[pol].at<double>(
+          ey + circle[arc_left_idx][1], ex + circle[arc_left_idx][0]);
+      if (arc_left_value < arc_left_min_t) {
+        arc_left_min_t = arc_left_value;
+      }
+    }
+  }
 
+  return newest_segment_size;
+}
 
 void DVSCornerDetector::publish_corner_image(double t_now)
 {
@@ -137,7 +221,6 @@ void DVSCornerDetector::publish_corner_image(double t_now)
   }
 
   // Compute exp(-(t_now - t_last(x,y)) / tau) for every pixel
-
   cv::Mat combined;
   cv::max(sae_[0], sae_[1], combined);
 
@@ -145,7 +228,6 @@ void DVSCornerDetector::publish_corner_image(double t_now)
   cv::Mat decay;
   cv::exp(-time_diff / tau_, decay);
 
-  // Convert [0.0, 1.0] range to [0, 255]
   cv::Mat gray;
   decay.convertTo(gray, CV_8U, 255.0);
 
@@ -165,9 +247,6 @@ void DVSCornerDetector::publish_corner_image(double t_now)
 
   corner_events_.clear();
 }
-
-
-
 
 int main(int argc, char ** argv)
 {

@@ -7,9 +7,6 @@
 #include "dvs_msgs/msg/event_array.hpp"
 #include "sensor_msgs/msg/image.hpp"
 
-
-
-
 #include <vector>
 
 class DVSCornerDetector : public rclcpp::Node
@@ -19,39 +16,39 @@ public:
 
 private:
     void event_callback(const dvs_msgs::msg::EventArray::SharedPtr msg);
-
     void publish_corner_image(double t_now);
+    bool is_corner(const dvs_msgs::msg::Event& event, double t);
 
-    bool is_corner(const dvs_msgs::msg::Event& event);
-
-    std::vector<std::pair<int,int>> get_circle_indices(int x, int y);
+    // Arc test on a single circle: greedy bidirectional expansion
+    // Returns the newest segment size
+    int arc_test(int ex, int ey, int pol,
+                 const int circle[][2], int circle_size);
 
     rclcpp::Subscription<dvs_msgs::msg::EventArray>::SharedPtr event_subscription_;
-    // Publisher for visualization
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr corner_image_pub_;
 
-    int R;
-    double k;
-
-    int l_min;
-    int l_max;
     double tau_;
+    double filter_threshold_;
 
     int sensor_width_;
     int sensor_height_;
 
+    // Hardcoded Bresenham circles
+    static constexpr int kSmallCircleSize = 16;
+    static constexpr int kLargeCircleSize = 20;
+    static constexpr int kSmallMinThresh = 3;
+    static constexpr int kSmallMaxThresh = 6;
+    static constexpr int kLargeMinThresh = 4;
+    static constexpr int kLargeMaxThresh = 8;
+    static constexpr int kBorderLimit = 4;
+
+    static const int kSmallCircle[16][2];
+    static const int kLargeCircle[20][2];
+
     // Polarity-separated SAE: sae_[0] = negative, sae_[1] = positive
-    // Stores raw timestamps in seconds (CV_64F)
     cv::Mat sae_[2];
+    // Tracks latest timestamp per pixel per polarity (for refractory filter)
+    cv::Mat sae_latest_[2];
 
-    // Storage for detected corners
     std::vector<dvs_msgs::msg::Event> corner_events_;
-
- 
-
-
-
-
-
-
 };
