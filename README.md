@@ -15,6 +15,10 @@ Message definitions for DVS event data.
 
 Visualization and processing tools for DVS event streams. Includes nodes for 2D histogram views, time surfaces, and 3D voxel grid representations. See the [package README](dvs_view_ros2/README.md) for detailed node documentation and parameters.
 
+### dvs_tracker
+
+Real-time corner detection on DVS event streams using the Arc* algorithm. Implements greedy bidirectional arc expansion on two Bresenham circles with polarity-separated surfaces and a refractory filter. See the [package README](dvs_tracker/README.md) for algorithm details and references.
+
 ## Installation
 
 ### Prerequisites
