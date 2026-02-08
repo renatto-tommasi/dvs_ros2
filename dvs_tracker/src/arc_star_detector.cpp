@@ -1,4 +1,4 @@
-#include "dvs_tracker/corner_detector.hpp"
+#include "dvs_tracker/arc_star_detector.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -18,7 +18,7 @@ const int DVSCornerDetector::kLargeCircle[20][2] = {
     {-4, 1}, {-3, 2}, {-2, 3}, {-1, 4}
 };
 
-DVSCornerDetector::DVSCornerDetector() : Node("corner_detector")
+DVSCornerDetector::DVSCornerDetector() : Node("arc_star_detector")
 {
   this->declare_parameter<double>("decay_time", 0.1);
   this->declare_parameter<double>("filter_threshold", 0.05);
@@ -214,13 +214,8 @@ int DVSCornerDetector::arc_test(int ex, int ey, int pol,
   return newest_segment_size;
 }
 
-void DVSCornerDetector::publish_corner_image(double t_now)
+cv::Mat DVSCornerDetector::compute_decay_image(double t_now)
 {
-  if (corner_events_.empty()) {
-    return;
-  }
-
-  // Compute exp(-(t_now - t_last(x,y)) / tau) for every pixel
   cv::Mat combined;
   cv::max(sae_[0], sae_[1], combined);
 
@@ -233,6 +228,16 @@ void DVSCornerDetector::publish_corner_image(double t_now)
 
   cv::Mat vis;
   cv::cvtColor(gray, vis, cv::COLOR_GRAY2BGR);
+  return vis;
+}
+
+void DVSCornerDetector::publish_corner_image(double t_now)
+{
+  if (corner_events_.empty()) {
+    return;
+  }
+
+  cv::Mat vis = compute_decay_image(t_now);
 
   for (const auto& e : corner_events_) {
     cv::circle(vis, cv::Point(e.x, e.y), 2, cv::Scalar(0, 0, 255), -1);

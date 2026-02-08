@@ -6,8 +6,8 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='dvs_tracker',
-            executable='corner_detector',
-            name='corner_detector',
+            executable='arc_star_detector',
+            name='arc_star_detector',
             output='screen',
             parameters=[{
                 'decay_time': 0.03,

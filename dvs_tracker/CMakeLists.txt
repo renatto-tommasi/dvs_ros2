@@ -21,17 +21,23 @@ find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 
-add_executable(corner_detector src/corner_detector.cpp)
-ament_target_dependencies(corner_detector rclcpp dvs_msgs sensor_msgs cv_bridge)
-target_include_directories(corner_detector PUBLIC include)
+add_executable(arc_star_detector src/arc_star_detector.cpp)
+ament_target_dependencies(arc_star_detector rclcpp dvs_msgs sensor_msgs cv_bridge)
+target_include_directories(arc_star_detector PUBLIC include)
 # Link OpenCV
-target_link_libraries(corner_detector
+target_link_libraries(arc_star_detector
   ${OpenCV_LIBRARIES}
 )
 
 
+add_executable(efast_detector src/efast_detector.cpp)
+ament_target_dependencies(efast_detector rclcpp sensor_msgs cv_bridge)
+target_include_directories(efast_detector PUBLIC include)
+target_link_libraries(efast_detector ${OpenCV_LIBRARIES})
+
 install(TARGETS
-  corner_detector
+  arc_star_detector
+  efast_detector
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch

@@ -16,6 +16,7 @@ public:
 
 private:
     void event_callback(const dvs_msgs::msg::EventArray::SharedPtr msg);
+    cv::Mat compute_decay_image(double t_now);
     void publish_corner_image(double t_now);
     bool is_corner(const dvs_msgs::msg::Event& event, double t);
 

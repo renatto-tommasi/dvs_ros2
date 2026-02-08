@@ -42,7 +42,7 @@ The Arc* algorithm detects corners by analyzing the temporal structure of events
 - **Hardcoded Bresenham circles:** The circle pixel coordinates are precomputed lookup tables (not trigonometric sampling), ensuring consistent discretization and zero runtime overhead.
 - **Polarity separation:** Processing positive and negative events on separate surfaces is critical for avoiding false detections along edges.
 
-## Node: corner_detector
+## Node: arc_star_detector
 
 ### Subscribed Topics
 

@@ -80,7 +80,7 @@ for (const auto& event : msg->events) {
 
 void DVSHistogram::publish_frames()
 {
-    auto stamp = this->now();
+    auto stamp = current_frame_start_time_;
 
     // Normalize and publish frame without polarity
     cv::Mat normalized_no_pol;
