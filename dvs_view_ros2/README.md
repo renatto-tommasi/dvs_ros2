@@ -39,3 +39,22 @@ Computes a Time Surface (Surface of Active Events) where each pixel's brightness
 ```bash
 ros2 run dvs_view_ros2 time_surface --ros-args -p decay_time:=0.03
 ```
+
+### voxel_grid
+
+Builds a 3D voxel grid (height x width x time) from DVS events. Events are accumulated across multiple callbacks until the time window is full, then the grid is published as a MarkerArray for visualization in RViz.
+
+**Subscriptions:**
+- `/dvs/events` (`dvs_msgs/msg/EventArray`)
+
+**Publications:**
+- `/dvs/voxel_grid` (`visualization_msgs/msg/MarkerArray`) - 3D cube list colored by time bin (blue = older, red = newer)
+
+**Parameters:**
+- `voxel_time_bin_size` (`double`, default: `0.01`) - Duration of each time bin in seconds.
+- `num_time_bins` (`int`, default: `10`) - Number of time bins in the voxel grid. The total accumulation window is `num_time_bins * voxel_time_bin_size`.
+
+**Usage:**
+```bash
+ros2 run dvs_view_ros2 voxel_grid --ros-args -p voxel_time_bin_size:=0.02 -p num_time_bins:=8
+```

@@ -10,6 +10,7 @@ find_package(ament_cmake REQUIRED)
 find_package(dvs_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(rclcpp)
 find_package(OpenCV REQUIRED)
 # uncomment the following section in order to fill in
@@ -34,10 +35,22 @@ target_link_libraries(time_surface
   ${OpenCV_LIBRARIES}
 )
 
+add_executable(voxel_grid src/dvs_voxel_grid.cpp)
+ament_target_dependencies(voxel_grid rclcpp dvs_msgs sensor_msgs visualization_msgs cv_bridge)
+target_include_directories(voxel_grid PUBLIC include)
+# Link OpenCV
+target_link_libraries(voxel_grid
+  ${OpenCV_LIBRARIES}
+)
+
 install(TARGETS
   histogram_2D
   time_surface
+  voxel_grid
   DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME})
 
 
 ament_package()
