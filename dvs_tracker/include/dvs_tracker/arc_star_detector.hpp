@@ -27,6 +27,7 @@ private:
 
     rclcpp::Subscription<dvs_msgs::msg::EventArray>::SharedPtr event_subscription_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr corner_image_pub_;
+    rclcpp::Publisher<dvs_msgs::msg::EventArray>::SharedPtr corner_event_pub_;
 
     double tau_;
     double filter_threshold_;

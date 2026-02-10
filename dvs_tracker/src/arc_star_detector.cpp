@@ -33,6 +33,7 @@ DVSCornerDetector::DVSCornerDetector() : Node("arc_star_detector")
     "/dvs/events", 10, std::bind(&DVSCornerDetector::event_callback, this, std::placeholders::_1));
 
   corner_image_pub_ = this->create_publisher<sensor_msgs::msg::Image>("/dvs/corner_image", 10);
+  corner_event_pub_ = this->create_publisher<dvs_msgs::msg::EventArray>("/dvs/corners", 10);
 }
 
 void DVSCornerDetector::event_callback(const dvs_msgs::msg::EventArray::SharedPtr msg)
@@ -76,6 +77,15 @@ void DVSCornerDetector::event_callback(const dvs_msgs::msg::EventArray::SharedPt
     if (is_corner(event, et)) {
       corner_events_.push_back(event);
     }
+  }
+
+  if (!corner_events_.empty()) {
+    auto corner_msg = dvs_msgs::msg::EventArray();
+    corner_msg.header = msg->header;
+    corner_msg.width = msg->width;
+    corner_msg.height = msg->height;
+    corner_msg.events = corner_events_;
+    corner_event_pub_->publish(corner_msg);
   }
 
   if (!msg->events.empty()) {
