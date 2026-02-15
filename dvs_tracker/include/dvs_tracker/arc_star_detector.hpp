@@ -19,6 +19,7 @@ private:
     cv::Mat compute_decay_image(double t_now);
     void publish_corner_image(double t_now);
     bool is_corner(const dvs_msgs::msg::Event& event, double t);
+    bool is_suppressed(int ex, int ey, double t);
 
     // Arc test on a single circle: greedy bidirectional expansion
     // Returns the newest segment size
@@ -31,6 +32,7 @@ private:
 
     double tau_;
     double filter_threshold_;
+    double nms_threshold_;
 
     int sensor_width_;
     int sensor_height_;
@@ -43,6 +45,7 @@ private:
     static constexpr int kLargeMinThresh = 4;
     static constexpr int kLargeMaxThresh = 8;
     static constexpr int kBorderLimit = 4;
+    static constexpr int kNmsRadius = 4;
 
     static const int kSmallCircle[16][2];
     static const int kLargeCircle[20][2];
@@ -51,6 +54,8 @@ private:
     cv::Mat sae_[2];
     // Tracks latest timestamp per pixel per polarity (for refractory filter)
     cv::Mat sae_latest_[2];
+    // Tracks last corner detection time per pixel (for NMS)
+    cv::Mat corner_last_ts_;
 
     std::vector<dvs_msgs::msg::Event> corner_events_;
 };

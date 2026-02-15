@@ -17,6 +17,7 @@ struct GraphNode{
     float x , y;    // Event Coordinates
 
     // Graph Meta Data
+    int id = -1;
     int depth;
     bool active;
 
@@ -71,9 +72,10 @@ private:
 
     
     
-    const float d_conn_ = 5.0f;
-    const float dt_max_ = 0.1f;
-    const int rho_thresh_ = 5;
+    float d_conn_ = 5.0f;
+    float dt_max_ = 0.5f;
+    int rho_thresh_ = 10;
+    int max_track_length_ = 10;
     const double min_track_duration_ = 0.5;
     double track_window_;
     double last_event_t_ = 0.0;
@@ -83,6 +85,7 @@ private:
     int sensor_height_ = 0;
 
     size_t trees_pruned_ = 0;
+    int next_track_id_ = 0;
 
     std::vector<std::shared_ptr<GraphNode>> trees_;
     std::vector<std::vector<std::vector<GraphNode*>>> active_grid_;

@@ -11,7 +11,13 @@ GraphNode::GraphNode(double timestamp, float px, float py)
 EventTracker::EventTracker() : Node("corner_detector")
 {
     this->declare_parameter<double>("track_window", 3.0);
-    track_window_ = this->get_parameter("track_window").as_double();
+    this->declare_parameter<double>("d_conn", 5.0);
+    this->declare_parameter<int>("rho_thresh", 10);
+    this->declare_parameter<int>("max_track_length", 10);
+    dt_max_ = this->get_parameter("track_window").as_double();
+    d_conn_ = this->get_parameter("d_conn").as_double();
+    rho_thresh_ = this->get_parameter("rho_thresh").as_int();
+    max_track_length_ = this->get_parameter("max_track_length").as_int();
 
     corner_subscription_ = this->create_subscription<dvs_msgs::msg::EventArray>(
         "/dvs/corners", 10, std::bind(&EventTracker::corner_callback, this, std::placeholders::_1));
@@ -98,6 +104,7 @@ void EventTracker::DiscardOldVertices(std::vector<GraphNode*>& v_neigh, double t
 }
 
 void EventTracker::InitializeNewTreeFromVertex(std::shared_ptr<GraphNode> v){
+    v->id = next_track_id_++;
     trees_.push_back(v);
     auto [r, c] = toCell(v->x, v->y);
     active_grid_[r][c].push_back(v.get());
@@ -221,7 +228,7 @@ std::vector<GraphNode*> EventTracker::find_recent_path(GraphNode* root){
     double t_leaf = deepest->t;
     std::vector<GraphNode*> path;
     GraphNode* cursor = deepest;
-    while (cursor != nullptr && (t_leaf - cursor->t) <= track_window_) {
+    while (cursor != nullptr) {
         path.push_back(cursor);
         cursor = cursor->parent;
     }
@@ -238,12 +245,11 @@ void EventTracker::publish_track_image(){
         vis = cv::Mat::zeros(sensor_height_, sensor_width_, CV_8UC3);
     }
 
-    int color_idx = 0;
     size_t write = 0;
     for (size_t t = 0; t < trees_.size(); t++) {
         auto path = find_recent_path(trees_[t].get());
 
-        if (path.empty() || (last_event_t_ - path.front()->t) > track_window_) {
+        if (path.empty() || (last_event_t_ - path.front()->t) > dt_max_) {
             RemoveTreeFromGrid(trees_[t].get());
             trees_pruned_++;
             continue; // stale tree — skip and don't keep
@@ -255,16 +261,16 @@ void EventTracker::publish_track_image(){
         double duration = path.front()->t - path.back()->t;
         if (duration < min_track_duration_) continue;
 
-        int hue = (color_idx * 47) % 180;
+        int hue = (trees_[t]->id * 47) % 180;
         cv::Mat hsv(1, 1, CV_8UC3, cv::Scalar(hue, 255, 255));
         cv::Mat bgr;
         cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
         cv::Scalar color(bgr.at<cv::Vec3b>(0, 0)[0],
                          bgr.at<cv::Vec3b>(0, 0)[1],
                          bgr.at<cv::Vec3b>(0, 0)[2]);
-        color_idx++;
+        size_t limit = std::min(path.size(), static_cast<size_t>(max_track_length_));
 
-        for (size_t i = 0; i < path.size() - 1; i++) {
+        for (size_t i = 0; i < limit - 1; i++) {
             cv::line(vis,
                 cv::Point(static_cast<int>(path[i]->x), static_cast<int>(path[i]->y)),
                 cv::Point(static_cast<int>(path[i+1]->x), static_cast<int>(path[i+1]->y)),
@@ -279,46 +285,63 @@ void EventTracker::publish_track_image(){
     cv_image.image = vis;
     track_image_pub_->publish(*cv_image.toImageMsg());
 }
-
 void EventTracker::print_metrics(){
     if (trees_.empty()) {
         RCLCPP_INFO(this->get_logger(), "No active trees");
         return;
     }
 
-    double longest_duration = 0.0;
-    int longest_nodes = 0;
+    double max_duration = 0.0;
+    int max_nodes = 0;
     int drawable_tracks = 0;
+    
+    // Accumulators for valid paths (size >= 2)
     double total_duration = 0.0;
-    int paths_counted = 0;
-    int total_nodes = 0;
+    long long total_nodes = 0;
+    int valid_paths_count = 0;
 
     for (size_t i = 0; i < trees_.size(); i++) {
         auto path = find_recent_path(trees_[i].get());
+        
         if (path.size() < 2) continue;
-        double duration = path.front()->t - path.back()->t;
-        total_duration += duration;
-        if (duration >= min_track_duration_) drawable_tracks++;
-        if (duration > longest_duration) {
-            longest_duration = duration;
-            longest_nodes = path.size();
-            paths_counted++;
-            total_nodes += path.size();
 
+        double duration = path.front()->t - path.back()->t;
+        int nodes = static_cast<int>(path.size());
+
+        // Update global aggregates
+        total_duration += duration;
+        total_nodes += nodes;
+        valid_paths_count++;
+
+        // Check thresholds
+        if (duration >= min_track_duration_) {
+            drawable_tracks++;
+        }
+
+        // Track maximums independently
+        if (duration > max_duration) {
+            max_duration = duration;
+        }
+        
+        // Since time is capped, max_nodes is the most meaningful peak metric
+        if (nodes > max_nodes) {
+            max_nodes = nodes;
         }
     }
 
-    double avg_nodes = paths_counted > 0 ? (double)total_nodes / paths_counted : 0.0;
+    double avg_nodes = valid_paths_count > 0 ? (double)total_nodes / valid_paths_count : 0.0;
 
-
+    // Output:
+    // - MaxDur: Verifies we are hitting the 1.0s cap
+    // - MaxNodes: The size of the "best" track (most meaningful metric)
+    // - AvgNodes: The average size of all tracked features
     RCLCPP_INFO(this->get_logger(),
-        "Trees: %zu | Drawable: %d | Pruned: %zu | Longest: %.2fs (%d nodes) | AvgNodes: %.1f",
+        "Trees: %zu | Drawable: %d | Pruned: %zu | MaxDur: %.2fs | MaxNodes: %d | AvgNodes: %.1f",
         trees_.size(), drawable_tracks, trees_pruned_,
-        longest_duration, longest_nodes, avg_nodes);
+        max_duration, max_nodes, avg_nodes);
 
     trees_pruned_ = 0;
 }
-
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);

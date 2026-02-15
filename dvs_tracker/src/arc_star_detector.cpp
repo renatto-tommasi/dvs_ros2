@@ -22,9 +22,11 @@ DVSCornerDetector::DVSCornerDetector() : Node("arc_star_detector")
 {
   this->declare_parameter<double>("decay_time", 0.1);
   this->declare_parameter<double>("filter_threshold", 0.05);
+  this->declare_parameter<double>("nms_threshold", 0.05);
 
   tau_ = this->get_parameter("decay_time").as_double();
   filter_threshold_ = this->get_parameter("filter_threshold").as_double();
+  nms_threshold_ = this->get_parameter("nms_threshold").as_double();
 
   sensor_width_ = 0;
   sensor_height_ = 0;
@@ -46,6 +48,7 @@ void DVSCornerDetector::event_callback(const dvs_msgs::msg::EventArray::SharedPt
     sae_[1] = cv::Mat::zeros(sensor_height_, sensor_width_, CV_64F);
     sae_latest_[0] = cv::Mat::zeros(sensor_height_, sensor_width_, CV_64F);
     sae_latest_[1] = cv::Mat::zeros(sensor_height_, sensor_width_, CV_64F);
+    corner_last_ts_ = cv::Mat::zeros(sensor_height_, sensor_width_, CV_64F);
     RCLCPP_INFO(this->get_logger(), "SAE initialized: %dx%d", sensor_width_, sensor_height_);
   }
 
@@ -74,7 +77,8 @@ void DVSCornerDetector::event_callback(const dvs_msgs::msg::EventArray::SharedPt
       continue;
     }
 
-    if (is_corner(event, et)) {
+    if (is_corner(event, et) && !is_suppressed(ex, ey, et)) {
+      corner_last_ts_.at<double>(ey, ex) = et;
       corner_events_.push_back(event);
     }
   }
@@ -222,6 +226,24 @@ int DVSCornerDetector::arc_test(int ex, int ey, int pol,
   }
 
   return newest_segment_size;
+}
+
+bool DVSCornerDetector::is_suppressed(int ex, int ey, double t)
+{
+  int x_start = std::max(0, ex - kNmsRadius);
+  int x_end = std::min(sensor_width_ - 1, ex + kNmsRadius);
+  int y_start = std::max(0, ey - kNmsRadius);
+  int y_end = std::min(sensor_height_ - 1, ey + kNmsRadius);
+
+  for (int y = y_start; y <= y_end; y++) {
+    for (int x = x_start; x <= x_end; x++) {
+      if (x == ex && y == ey) continue;
+      if (t - corner_last_ts_.at<double>(y, x) < nms_threshold_) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 cv::Mat DVSCornerDetector::compute_decay_image(double t_now)
